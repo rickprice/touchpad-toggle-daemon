@@ -1,0 +1,13 @@
+[package]
+name = "touchpad-toggle-daemon"
+version = "0.1.0"
+edition = "2021"
+description = "Disables the laptop touchpad while an external mouse is connected"
+license = "BSD-3-Clause"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+env_logger = "0.11"
+log = "0.4"
+nix = { version = "0.27", features = ["poll"] }
+udev = "0.8"

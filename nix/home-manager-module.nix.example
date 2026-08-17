@@ -1,0 +1,42 @@
+## Example Home Manager wiring for touchpad-toggle-daemon.
+##
+## In your dotfiles flake, add this repo as an input:
+##
+##   inputs.touchpad-toggle-daemon.url = "github:<you>/touchpad-toggle-daemon";
+##
+## then pull the package into home.packages and the systemd unit below into
+## your home/default.nix (or wherever the rest of your home-manager module
+## lives), passing `touchpad-toggle-daemon` through your specialArgs/extraSpecialArgs.
+##
+## Adjust --touchpad-name to the exact name `xinput list` reports for your
+## laptop's touchpad, e.g.:
+##
+##   xinput list --name-only | grep -i touchpad
+##
+## Leaving --touchpad-name off falls back to autodetecting the first device
+## whose name contains "touchpad" (case-insensitive).
+{
+  pkgs,
+  touchpad-toggle-daemon,
+  ...
+}:
+{
+  home.packages = [ touchpad-toggle-daemon.packages.${pkgs.system}.default ];
+
+  systemd.user.services.touchpad-toggle-daemon = {
+    Unit = {
+      Description = "Disable the touchpad while an external mouse is connected";
+      After = [ "graphical-session.target" ];
+      PartOf = [ "graphical-session.target" ];
+    };
+
+    Service = {
+      ExecStart = "${touchpad-toggle-daemon.packages.${pkgs.system}.default}/bin/touchpad-toggle-daemon --touchpad-name \"SynPS/2 Synaptics TouchPad\"";
+      Restart = "on-failure";
+    };
+
+    Install = {
+      WantedBy = [ "graphical-session.target" ];
+    };
+  };
+}
