@@ -10,6 +10,7 @@ use std::process::Command;
 
 use clap::Parser;
 use log::{error, info};
+use nix::errno::Errno;
 use nix::poll::{poll, PollFd, PollFlags};
 use touchpad_toggle_daemon::{
     find_touchpad_name, is_mouse_event_device, xinput_action, MouseCounter,
@@ -116,9 +117,14 @@ fn run(touchpad_name: &str) -> std::io::Result<()> {
     }
 
     loop {
-        // Block until the monitor socket has an event ready, rather than polling in a busy loop.
         let mut poll_fds = [PollFd::new(&socket, PollFlags::POLLIN)];
-        poll(&mut poll_fds, -1)?;
+        loop {
+            match poll(&mut poll_fds, -1) {
+                Ok(_) => break,
+                Err(Errno::EINTR) => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
 
         for event in socket.iter() {
             let device = event.device();
