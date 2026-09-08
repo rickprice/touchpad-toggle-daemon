@@ -1,13 +1,31 @@
 # touchpad-toggle-daemon
 
 Rust daemon that disables the laptop touchpad while an external mouse is
-connected, and re-enables it once the last one is unplugged.
+connected and active, and re-enables it once the last active mouse is gone.
 
 It watches udev's `input` subsystem for hotplug events (no polling),
 identifies mice via the `ID_INPUT_MOUSE` udev property (no vendor/product ID
 or name-substring matching), tracks a running count so multiple mice plugged
 in at once behave correctly, and toggles the touchpad by shelling out to
 `xinput enable`/`xinput disable`.
+
+## Battery-aware detection
+
+Wireless mice connected via a USB receiver (e.g. Logitech Unifying or Bolt)
+appear in udev as soon as the dongle is plugged in, regardless of whether the
+mouse itself is switched on. The daemon handles this by reading the
+`power_supply/*/status` file the kernel exposes for HID++ devices:
+
+- `Discharging` / `Charging` / `Full` → mouse is on, touchpad disabled
+- `Unknown` → mouse is off or out of range, touchpad left enabled
+
+The daemon also subscribes to `power_supply` change events, so turning the
+mouse on or off while the dongle remains plugged in updates the touchpad state
+in real time — no need to re-plug the receiver.
+
+Devices with no battery entry (wired mice, or receivers that don't expose
+battery status) are always treated as active, preserving the original
+behaviour.
 
 ## Usage
 
