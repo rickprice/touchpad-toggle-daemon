@@ -74,6 +74,16 @@ pub fn xinput_action(enabled: bool) -> &'static str {
     }
 }
 
+/// Whether a `power_supply` status string means the battery is present and
+/// active. `"Discharging"`, `"Charging"`, and `"Full"` are active;
+/// `"Unknown"` is what `hid-logitech-hidpp` reports when the mouse is
+/// switched off or out of range.
+#[inline]
+#[must_use]
+pub fn is_battery_active(status: &str) -> bool {
+    matches!(status.trim(), "Discharging" | "Charging" | "Full")
+}
+
 /// Parses `xinput list --name-only` output and returns the first device
 /// name containing "touchpad" (case-insensitive), trimmed of surrounding
 /// whitespace.
@@ -214,6 +224,45 @@ mod tests {
         #[test]
         fn malformed_property_value_is_not_a_mouse() {
             assert!(!is_mouse_event_device(true, Some("true")));
+        }
+    }
+
+    mod battery_status {
+        use super::*;
+
+        #[test]
+        fn discharging_is_active() {
+            assert!(is_battery_active("Discharging"));
+        }
+
+        #[test]
+        fn charging_is_active() {
+            assert!(is_battery_active("Charging"));
+        }
+
+        #[test]
+        fn full_is_active() {
+            assert!(is_battery_active("Full"));
+        }
+
+        #[test]
+        fn unknown_is_inactive() {
+            assert!(!is_battery_active("Unknown"));
+        }
+
+        #[test]
+        fn not_charging_is_inactive() {
+            assert!(!is_battery_active("Not charging"));
+        }
+
+        #[test]
+        fn empty_is_inactive() {
+            assert!(!is_battery_active(""));
+        }
+
+        #[test]
+        fn leading_trailing_whitespace_is_trimmed() {
+            assert!(is_battery_active("  Discharging\n"));
         }
     }
 
