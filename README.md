@@ -30,6 +30,13 @@ Logs go to stderr with timestamps (`RUST_LOG` controls verbosity, default
 `info`), so `journalctl --user -u touchpad-toggle-daemon` is useful when run
 as a systemd unit.
 
+## Known limitations
+
+When the daemon is stopped while a mouse is connected, the touchpad remains
+disabled until it is restarted or `xinput enable` is run manually. The
+`Restart = "on-failure"` systemd setting means the daemon re-evaluates the
+connected mice on restart and re-enables the touchpad if none are present.
+
 ## Building
 
 ```
