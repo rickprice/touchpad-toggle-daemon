@@ -96,6 +96,13 @@ fn is_external_mouse(device: &udev::Device) -> bool {
 }
 
 fn run(touchpad_name: &str) -> std::io::Result<()> {
+    // Create the monitor socket before enumerating so that any hotplug events
+    // that arrive during enumeration are buffered in the socket and processed
+    // in the main loop, rather than silently dropped.
+    let socket = udev::MonitorBuilder::new()?
+        .match_subsystem("input")?
+        .listen()?;
+
     let mut enumerator = udev::Enumerator::new()?;
     enumerator.match_subsystem("input")?;
     let initial = enumerator.scan_devices()?.filter(is_external_mouse).count();
@@ -107,10 +114,6 @@ fn run(touchpad_name: &str) -> std::io::Result<()> {
     if mice.count() > 0 {
         set_touchpad_enabled(touchpad_name, false);
     }
-
-    let socket = udev::MonitorBuilder::new()?
-        .match_subsystem("input")?
-        .listen()?;
 
     loop {
         // Block until the monitor socket has an event ready, rather than polling in a busy loop.
