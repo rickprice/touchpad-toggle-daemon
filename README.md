@@ -44,9 +44,28 @@ SynPS/2 Synaptics TouchPad
 If omitted, the daemon autodetects the first `xinput` device whose name
 contains "touchpad" (case-insensitive).
 
-Logs go to stderr with timestamps (`RUST_LOG` controls verbosity, default
-`info`), so `journalctl --user -u touchpad-toggle-daemon` is useful when run
-as a systemd unit.
+### Logging
+
+Logs go to stderr with timestamps; `journalctl --user -u touchpad-toggle-daemon`
+is useful when run as a systemd unit. `RUST_LOG` controls verbosity:
+
+| Level | What you see |
+|-------|-------------|
+| `info` (default) | Startup summary, each mouse plug/unplug/battery change, and every touchpad enable/disable action |
+| `debug` | Per-device udev property inspection during startup scan and on every event (`has_devnode`, `ID_INPUT_MOUSE`, `ID_INPUT_TOUCHPAD`, battery status file path and raw value, HID ancestor path resolution) |
+| `trace` | Every device examined during startup, every sysfs ancestor level checked for `power_supply/`, and every unhandled udev event type |
+
+Set the level at launch:
+
+```
+RUST_LOG=debug touchpad-toggle-daemon
+```
+
+or persistently in the systemd unit's `[Service]` section:
+
+```ini
+Environment=RUST_LOG=debug
+```
 
 ## Known limitations
 

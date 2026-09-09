@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use clap::Parser;
-use log::{error, info};
+use log::{debug, error, info, trace};
 use nix::errno::Errno;
 use nix::poll::{poll, PollFd, PollFlags};
 use touchpad_toggle_daemon::{
@@ -92,10 +92,20 @@ fn set_touchpad_enabled(touchpad_name: &str, enabled: bool) {
 
 /// Wraps `is_mouse_event_device` with the actual udev property lookup.
 fn is_external_mouse(device: &udev::Device) -> bool {
+    let sysname = device.sysname().to_string_lossy();
+    let has_devnode = device.devnode().is_some();
     let id_input_mouse = device
         .property_value("ID_INPUT_MOUSE")
         .and_then(|v| v.to_str());
-    is_mouse_event_device(device.devnode().is_some(), id_input_mouse)
+    let id_input_touchpad = device
+        .property_value("ID_INPUT_TOUCHPAD")
+        .and_then(|v| v.to_str());
+    let result = is_mouse_event_device(has_devnode, id_input_mouse);
+    debug!(
+        "is_external_mouse({sysname}): has_devnode={has_devnode}, \
+         ID_INPUT_MOUSE={id_input_mouse:?}, ID_INPUT_TOUCHPAD={id_input_touchpad:?} → {result}"
+    );
+    result
 }
 
 /// Walks up the sysfs hierarchy from the device's own path looking for a
@@ -106,21 +116,38 @@ fn is_external_mouse(device: &udev::Device) -> bool {
 /// range), or `None` when no battery directory is found at all (wired mouse or
 /// a receiver that does not expose battery status — treated as always active).
 fn read_device_battery_status(syspath: &Path) -> Option<bool> {
+    debug!("read_device_battery_status: searching from {:?}", syspath);
     let mut path = syspath.parent()?;
-    for _ in 0..6 {
+    for depth in 0..6 {
         let ps_dir = path.join("power_supply");
+        trace!("  depth={depth}: checking for power_supply at {:?}", ps_dir);
         if ps_dir.is_dir() {
+            debug!("  found power_supply directory at {:?}", ps_dir);
             if let Ok(entries) = std::fs::read_dir(&ps_dir) {
                 for entry in entries.flatten() {
-                    if let Ok(status) = std::fs::read_to_string(entry.path().join("status")) {
-                        return Some(is_battery_active(&status));
+                    let status_path = entry.path().join("status");
+                    match std::fs::read_to_string(&status_path) {
+                        Ok(status) => {
+                            let active = is_battery_active(&status);
+                            debug!(
+                                "  battery status file {:?}: {:?} → active={active}",
+                                status_path,
+                                status.trim()
+                            );
+                            return Some(active);
+                        }
+                        Err(e) => {
+                            debug!("  could not read {:?}: {e}", status_path);
+                        }
                     }
                 }
             }
+            debug!("  power_supply directory found but no readable status; treating as inactive");
             return Some(false);
         }
         path = path.parent()?;
     }
+    debug!("  no power_supply directory found within 6 ancestor levels; assuming wired/unsupported (always active)");
     None
 }
 
@@ -128,7 +155,12 @@ fn read_device_battery_status(syspath: &Path) -> Option<bool> {
 /// (wired or unsupported receiver). Returns `false` only when a battery is
 /// present and explicitly reports an inactive status.
 fn device_battery_active_or_absent(device: &udev::Device) -> bool {
-    read_device_battery_status(device.syspath()).unwrap_or(true)
+    let result = read_device_battery_status(device.syspath()).unwrap_or(true);
+    debug!(
+        "device_battery_active_or_absent({}): {result}",
+        device.sysname().to_string_lossy()
+    );
+    result
 }
 
 /// Strips the `power_supply/<name>` suffix from the power supply's sysfs path
@@ -148,14 +180,31 @@ fn handle_battery_change(
     mice: &mut MouseCounter,
     touchpad_name: &str,
 ) {
-    let is_active = std::fs::read_to_string(ps_device.syspath().join("status"))
-        .map(|s| is_battery_active(&s))
-        .unwrap_or(false);
+    let status_path = ps_device.syspath().join("status");
+    let is_active = match std::fs::read_to_string(&status_path) {
+        Ok(s) => {
+            let active = is_battery_active(&s);
+            debug!(
+                "handle_battery_change: battery status at {:?} = {:?} → active={active}",
+                status_path,
+                s.trim()
+            );
+            active
+        }
+        Err(e) => {
+            debug!("handle_battery_change: could not read {:?}: {e}; treating as inactive", status_path);
+            false
+        }
+    };
 
     let hid_path = match hid_syspath_for_power_supply(ps_device) {
         Some(p) => p,
-        None => return,
+        None => {
+            debug!("handle_battery_change: could not derive HID syspath for {:?}; skipping", ps_device.syspath());
+            return;
+        }
     };
+    debug!("handle_battery_change: HID ancestor path = {:?}", hid_path);
 
     let associated: Vec<PathBuf> = tracked
         .keys()
@@ -163,18 +212,29 @@ fn handle_battery_change(
         .cloned()
         .collect();
 
+    debug!(
+        "handle_battery_change: {} tracked mouse device(s) under this HID receiver",
+        associated.len()
+    );
+
     for mouse_path in associated {
         let was_active = tracked[&mouse_path];
+        debug!(
+            "  mouse {:?}: was_active={was_active}, now is_active={is_active}",
+            mouse_path.file_name().unwrap_or_default()
+        );
         if was_active == is_active {
+            debug!("  no change; skipping");
             continue;
         }
         tracked.insert(mouse_path.clone(), is_active);
         if is_active {
             let should_disable = mice.connect();
             info!(
-                "Mouse battery active ({}); count = {}",
+                "Mouse battery became active ({}); mouse_count={}{}",
                 mouse_path.file_name().unwrap_or_default().to_string_lossy(),
-                mice.count()
+                mice.count(),
+                if should_disable { "; disabling touchpad" } else { "" }
             );
             if should_disable {
                 set_touchpad_enabled(touchpad_name, false);
@@ -182,9 +242,10 @@ fn handle_battery_change(
         } else {
             let should_enable = mice.disconnect();
             info!(
-                "Mouse battery inactive ({}); count = {}",
+                "Mouse battery became inactive ({}); mouse_count={}{}",
                 mouse_path.file_name().unwrap_or_default().to_string_lossy(),
-                mice.count()
+                mice.count(),
+                if should_enable { "; re-enabling touchpad" } else { "" }
             );
             if should_enable {
                 set_touchpad_enabled(touchpad_name, true);
@@ -211,23 +272,47 @@ fn run(touchpad_name: &str) -> std::io::Result<()> {
     let mut tracked: HashMap<PathBuf, bool> = HashMap::new();
     let mut mice = MouseCounter::new(0);
 
+    info!("Startup: scanning existing input devices via udev enumeration");
+    let mut enumerated = 0usize;
     for dev in enumerator.scan_devices()? {
+        enumerated += 1;
+        trace!(
+            "Startup scan: examining {} (syspath={:?})",
+            dev.sysname().to_string_lossy(),
+            dev.syspath()
+        );
         if !is_external_mouse(&dev) {
             continue;
         }
         let active = device_battery_active_or_absent(&dev);
+        tracked.insert(dev.syspath().to_path_buf(), active);
         if active {
             mice.connect();
+            info!(
+                "Startup: external mouse {} is active (syspath={:?}); mouse_count={}",
+                dev.sysname().to_string_lossy(),
+                dev.syspath(),
+                mice.count()
+            );
+        } else {
+            info!(
+                "Startup: external mouse {} found but battery inactive (syspath={:?}); not counting",
+                dev.sysname().to_string_lossy(),
+                dev.syspath()
+            );
         }
-        tracked.insert(dev.syspath().to_path_buf(), active);
     }
-
     info!(
-        "Startup: {} external mouse device(s) currently active",
+        "Startup scan complete: examined {enumerated} input device(s), \
+         {} external mouse device(s) tracked, {} currently active",
+        tracked.len(),
         mice.count()
     );
     if mice.count() > 0 {
+        info!("Startup: mouse(s) present; disabling touchpad");
         set_touchpad_enabled(touchpad_name, false);
+    } else {
+        info!("Startup: no active mice; touchpad left enabled");
     }
 
     loop {
@@ -242,21 +327,34 @@ fn run(touchpad_name: &str) -> std::io::Result<()> {
 
         for event in socket.iter() {
             let device = event.device();
-            match event.event_type() {
+            let event_type = event.event_type();
+            let sysname = device.sysname().to_string_lossy().into_owned();
+            let subsystem = device
+                .subsystem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("<none>")
+                .to_owned();
+            debug!(
+                "udev event: {:?} subsystem={subsystem} device={sysname}",
+                event_type
+            );
+            match event_type {
                 udev::EventType::Add if is_external_mouse(&device) => {
                     let active = device_battery_active_or_absent(&device);
                     let syspath = device.syspath().to_path_buf();
                     tracked.insert(syspath, active);
                     let should_disable = active && mice.connect();
                     info!(
-                        "External mouse detected ({}); battery_active={}, count={}",
-                        device.sysname().to_string_lossy(),
-                        active,
-                        mice.count()
+                        "External mouse plugged in: {sysname} (battery_active={active}, mouse_count={}){}",
+                        mice.count(),
+                        if should_disable { "; disabling touchpad" } else { "" }
                     );
                     if should_disable {
                         set_touchpad_enabled(touchpad_name, false);
                     }
+                }
+                udev::EventType::Add => {
+                    debug!("Add event for non-mouse device {sysname} (subsystem={subsystem}); ignoring");
                 }
                 udev::EventType::Remove => {
                     // Use the tracked map rather than re-checking udev properties,
@@ -265,22 +363,29 @@ fn run(touchpad_name: &str) -> std::io::Result<()> {
                     if let Some(was_active) = tracked.remove(&syspath) {
                         let should_enable = was_active && mice.disconnect();
                         info!(
-                            "External mouse removed ({}); was_active={}, count={}",
-                            device.sysname().to_string_lossy(),
-                            was_active,
-                            mice.count()
+                            "External mouse unplugged: {sysname} (was_active={was_active}, mouse_count={}){}",
+                            mice.count(),
+                            if should_enable { "; re-enabling touchpad" } else { "" }
                         );
                         if should_enable {
                             set_touchpad_enabled(touchpad_name, true);
                         }
+                    } else {
+                        debug!("Remove event for untracked device {sysname} (subsystem={subsystem}); ignoring");
                     }
                 }
                 udev::EventType::Change
-                    if device.subsystem().and_then(|s| s.to_str()) == Some("power_supply") =>
+                    if subsystem == "power_supply" =>
                 {
+                    info!("Battery change event for {sysname}; re-evaluating mouse activity");
                     handle_battery_change(&device, &mut tracked, &mut mice, touchpad_name);
                 }
-                _ => {}
+                udev::EventType::Change => {
+                    debug!("Change event for non-power_supply device {sysname} (subsystem={subsystem}); ignoring");
+                }
+                other => {
+                    trace!("Unhandled udev event type {other:?} for {sysname}; ignoring");
+                }
             }
         }
     }
