@@ -100,10 +100,18 @@ fn is_external_mouse(device: &udev::Device) -> bool {
     let id_input_touchpad = device
         .property_value("ID_INPUT_TOUCHPAD")
         .and_then(|v| v.to_str());
-    let result = is_mouse_event_device(has_devnode, id_input_mouse);
+    // Devices whose sysfs path sits under /devices/virtual/ are created by
+    // software (uinput), not physical hardware — keyd, XTEST, etc.  They must
+    // not be counted as external mice even when udev sets ID_INPUT_MOUSE=1.
+    let is_virtual = device
+        .devpath()
+        .to_string_lossy()
+        .starts_with("/devices/virtual/");
+    let result = is_mouse_event_device(has_devnode, id_input_mouse, is_virtual);
     debug!(
         "is_external_mouse({sysname}): has_devnode={has_devnode}, \
-         ID_INPUT_MOUSE={id_input_mouse:?}, ID_INPUT_TOUCHPAD={id_input_touchpad:?} → {result}"
+         ID_INPUT_MOUSE={id_input_mouse:?}, ID_INPUT_TOUCHPAD={id_input_touchpad:?}, \
+         is_virtual={is_virtual} → {result}"
     );
     result
 }

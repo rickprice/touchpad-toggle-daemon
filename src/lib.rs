@@ -57,10 +57,17 @@ impl MouseCounter {
 /// `id_input_mouse` is the device's `ID_INPUT_MOUSE` udev property, used
 /// instead of matching on device name, vendor ID, or product ID so any
 /// mouse is detected generically.
+/// `is_virtual` should be `true` when the device's sysfs path starts with
+/// `/devices/virtual/` — that subtree contains uinput-created devices such
+/// as keyd's virtual pointer, which must not be treated as external mice.
 #[inline]
 #[must_use]
-pub fn is_mouse_event_device(has_devnode: bool, id_input_mouse: Option<&str>) -> bool {
-    has_devnode && id_input_mouse == Some("1")
+pub fn is_mouse_event_device(
+    has_devnode: bool,
+    id_input_mouse: Option<&str>,
+    is_virtual: bool,
+) -> bool {
+    has_devnode && !is_virtual && id_input_mouse == Some("1")
 }
 
 /// The `xinput` subcommand for toggling a device's enabled state.
@@ -196,34 +203,47 @@ mod tests {
 
         #[test]
         fn devnode_with_mouse_property_is_a_mouse() {
-            assert!(is_mouse_event_device(true, Some("1")));
+            assert!(is_mouse_event_device(true, Some("1"), false));
         }
 
         #[test]
         fn devnode_without_mouse_property_is_not_a_mouse() {
-            assert!(!is_mouse_event_device(true, None));
+            assert!(!is_mouse_event_device(true, None, false));
         }
 
         #[test]
         fn devnode_with_mouse_property_set_to_zero_is_not_a_mouse() {
-            assert!(!is_mouse_event_device(true, Some("0")));
+            assert!(!is_mouse_event_device(true, Some("0"), false));
         }
 
         #[test]
         fn no_devnode_is_never_a_mouse_even_with_property_set() {
             // Filters out the parent "input" class device so a single
             // physical mouse isn't double-counted via its eventN child.
-            assert!(!is_mouse_event_device(false, Some("1")));
+            assert!(!is_mouse_event_device(false, Some("1"), false));
         }
 
         #[test]
         fn no_devnode_and_no_property_is_not_a_mouse() {
-            assert!(!is_mouse_event_device(false, None));
+            assert!(!is_mouse_event_device(false, None, false));
         }
 
         #[test]
         fn malformed_property_value_is_not_a_mouse() {
-            assert!(!is_mouse_event_device(true, Some("true")));
+            assert!(!is_mouse_event_device(true, Some("true"), false));
+        }
+
+        #[test]
+        fn virtual_device_with_mouse_property_is_not_a_mouse() {
+            // Devices under /devices/virtual/ (e.g. keyd virtual pointer,
+            // XTEST pointer) must never be treated as external mice even
+            // when udev stamps them with ID_INPUT_MOUSE=1.
+            assert!(!is_mouse_event_device(true, Some("1"), true));
+        }
+
+        #[test]
+        fn virtual_device_without_devnode_is_not_a_mouse() {
+            assert!(!is_mouse_event_device(false, Some("1"), true));
         }
     }
 

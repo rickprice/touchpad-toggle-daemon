@@ -67,6 +67,19 @@ or persistently in the systemd unit's `[Service]` section:
 Environment=RUST_LOG=debug
 ```
 
+## Virtual pointer devices (keyd, XTEST)
+
+Software keyboard remappers such as [keyd](https://github.com/rvaiya/keyd) and
+the X server's own XTEST infrastructure create virtual pointer devices via
+`uinput`. The kernel places all `uinput` devices under
+`/sys/devices/virtual/input/`, and udev stamps them with `ID_INPUT_MOUSE=1`
+just like real hardware mice.
+
+The daemon filters these out by checking whether a device's sysfs path begins
+with `/devices/virtual/` before counting it. Any device under that subtree is
+ignored, so keyd's virtual pointer (or any other software-generated pointer)
+never triggers a touchpad disable.
+
 ## Known limitations
 
 When the daemon is stopped while a mouse is connected, the touchpad remains
