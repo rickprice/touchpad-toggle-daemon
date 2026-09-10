@@ -91,7 +91,14 @@ fn set_touchpad_enabled(touchpad_name: &str, enabled: bool) {
 }
 
 /// Wraps `is_mouse_event_device` with the actual udev property lookup.
-fn is_external_mouse(device: &udev::Device) -> bool {
+///
+/// `touchpad_ancestor` is the sysfs `inputN` directory that parents all of
+/// the physical touchpad's sibling nodes (event, mouse, …). Any input node
+/// whose syspath falls under that prefix is excluded so that the touchpad's
+/// own relative-mouse node (mouseN) — which carries `ID_INPUT_MOUSE=1` but
+/// not necessarily `ID_INPUT_TOUCHPAD=1` — is never counted as an external
+/// mouse.
+fn is_external_mouse(device: &udev::Device, touchpad_ancestor: Option<&Path>) -> bool {
     let sysname = device.sysname().to_string_lossy();
     let has_devnode = device.devnode().is_some();
     let id_input_mouse = device
@@ -107,11 +114,16 @@ fn is_external_mouse(device: &udev::Device) -> bool {
         .devpath()
         .to_string_lossy()
         .starts_with("/devices/virtual/");
-    let result = is_mouse_event_device(has_devnode, id_input_mouse, is_virtual);
+    // Sibling nodes of the physical touchpad share the same inputN ancestor.
+    let is_touchpad_sibling = touchpad_ancestor
+        .map(|a| device.syspath().starts_with(a))
+        .unwrap_or(false);
+    let result = !is_touchpad_sibling
+        && is_mouse_event_device(has_devnode, id_input_mouse, id_input_touchpad, is_virtual);
     debug!(
         "is_external_mouse({sysname}): has_devnode={has_devnode}, \
          ID_INPUT_MOUSE={id_input_mouse:?}, ID_INPUT_TOUCHPAD={id_input_touchpad:?}, \
-         is_virtual={is_virtual} → {result}"
+         is_virtual={is_virtual}, is_touchpad_sibling={is_touchpad_sibling} → {result}"
     );
     result
 }
@@ -271,6 +283,29 @@ fn run(touchpad_name: &str) -> std::io::Result<()> {
         .match_subsystem("power_supply")?
         .listen()?;
 
+    // Find the sysfs inputN directory that parents all of the touchpad's input
+    // nodes (eventN, mouseN, …) so we can exclude them from mouse detection.
+    // I2C-HID touchpads set ID_INPUT_TOUCHPAD=1 on their event node, so a
+    // property-filtered enumeration reliably locates the right ancestor.
+    let touchpad_input_ancestor: Option<PathBuf> = {
+        let mut tp_enum = udev::Enumerator::new()?;
+        tp_enum.match_subsystem("input")?;
+        tp_enum.match_property("ID_INPUT_TOUCHPAD", "1")?;
+        tp_enum
+            .scan_devices()?
+            .filter_map(|dev| dev.syspath().parent().map(Path::to_path_buf))
+            .next()
+    };
+    match touchpad_input_ancestor {
+        Some(ref a) => info!(
+            "Touchpad input ancestor: {:?}; sibling nodes excluded from mouse count",
+            a
+        ),
+        None => info!(
+            "No ID_INPUT_TOUCHPAD=1 device found; touchpad sibling filtering disabled"
+        ),
+    }
+
     let mut enumerator = udev::Enumerator::new()?;
     enumerator.match_subsystem("input")?;
 
@@ -289,7 +324,7 @@ fn run(touchpad_name: &str) -> std::io::Result<()> {
             dev.sysname().to_string_lossy(),
             dev.syspath()
         );
-        if !is_external_mouse(&dev) {
+        if !is_external_mouse(&dev, touchpad_input_ancestor.as_deref()) {
             continue;
         }
         let active = device_battery_active_or_absent(&dev);
@@ -347,7 +382,7 @@ fn run(touchpad_name: &str) -> std::io::Result<()> {
                 event_type
             );
             match event_type {
-                udev::EventType::Add if is_external_mouse(&device) => {
+                udev::EventType::Add if is_external_mouse(&device, touchpad_input_ancestor.as_deref()) => {
                     let active = device_battery_active_or_absent(&device);
                     let syspath = device.syspath().to_path_buf();
                     tracked.insert(syspath, active);

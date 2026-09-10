@@ -80,6 +80,25 @@ with `/devices/virtual/` before counting it. Any device under that subtree is
 ignored, so keyd's virtual pointer (or any other software-generated pointer)
 never triggers a touchpad disable.
 
+## I2C-HID touchpad sibling nodes
+
+Many I2C-HID touchpads (common on AMD and Intel laptops) register multiple
+udev input nodes under the same hardware path: one event node carrying both
+`ID_INPUT_TOUCHPAD=1` and `ID_INPUT_MOUSE=1`, and a separate relative-mouse
+node (`mouseN`) carrying only `ID_INPUT_MOUSE=1`. Without filtering, the
+daemon would count these as external mice and disable the touchpad on every
+boot even with no real mouse plugged in.
+
+The daemon handles this in two complementary ways:
+
+- Any device carrying `ID_INPUT_TOUCHPAD=1` is excluded regardless of
+  `ID_INPUT_MOUSE`, catching the shared event node.
+- At startup the daemon locates the touchpad's sysfs `inputN` ancestor
+  directory (the parent of all its sibling nodes) by enumerating devices
+  with `ID_INPUT_TOUCHPAD=1`. Any `ID_INPUT_MOUSE=1` node whose sysfs path
+  falls under that ancestor is excluded — catching `mouseN` siblings that
+  lack `ID_INPUT_TOUCHPAD=1`.
+
 ## Known limitations
 
 When the daemon is stopped while a mouse is connected, the touchpad remains

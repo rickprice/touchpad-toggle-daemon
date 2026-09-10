@@ -57,6 +57,9 @@ impl MouseCounter {
 /// `id_input_mouse` is the device's `ID_INPUT_MOUSE` udev property, used
 /// instead of matching on device name, vendor ID, or product ID so any
 /// mouse is detected generically.
+/// `id_input_touchpad` is the device's `ID_INPUT_TOUCHPAD` udev property.
+/// I2C-HID touchpads set both `ID_INPUT_TOUCHPAD=1` and `ID_INPUT_MOUSE=1`
+/// on their event node; those must not be counted as external mice.
 /// `is_virtual` should be `true` when the device's sysfs path starts with
 /// `/devices/virtual/` — that subtree contains uinput-created devices such
 /// as keyd's virtual pointer, which must not be treated as external mice.
@@ -65,9 +68,13 @@ impl MouseCounter {
 pub fn is_mouse_event_device(
     has_devnode: bool,
     id_input_mouse: Option<&str>,
+    id_input_touchpad: Option<&str>,
     is_virtual: bool,
 ) -> bool {
-    has_devnode && !is_virtual && id_input_mouse == Some("1")
+    has_devnode
+        && !is_virtual
+        && id_input_mouse == Some("1")
+        && id_input_touchpad != Some("1")
 }
 
 /// The `xinput` subcommand for toggling a device's enabled state.
@@ -203,34 +210,34 @@ mod tests {
 
         #[test]
         fn devnode_with_mouse_property_is_a_mouse() {
-            assert!(is_mouse_event_device(true, Some("1"), false));
+            assert!(is_mouse_event_device(true, Some("1"), None, false));
         }
 
         #[test]
         fn devnode_without_mouse_property_is_not_a_mouse() {
-            assert!(!is_mouse_event_device(true, None, false));
+            assert!(!is_mouse_event_device(true, None, None, false));
         }
 
         #[test]
         fn devnode_with_mouse_property_set_to_zero_is_not_a_mouse() {
-            assert!(!is_mouse_event_device(true, Some("0"), false));
+            assert!(!is_mouse_event_device(true, Some("0"), None, false));
         }
 
         #[test]
         fn no_devnode_is_never_a_mouse_even_with_property_set() {
             // Filters out the parent "input" class device so a single
             // physical mouse isn't double-counted via its eventN child.
-            assert!(!is_mouse_event_device(false, Some("1"), false));
+            assert!(!is_mouse_event_device(false, Some("1"), None, false));
         }
 
         #[test]
         fn no_devnode_and_no_property_is_not_a_mouse() {
-            assert!(!is_mouse_event_device(false, None, false));
+            assert!(!is_mouse_event_device(false, None, None, false));
         }
 
         #[test]
         fn malformed_property_value_is_not_a_mouse() {
-            assert!(!is_mouse_event_device(true, Some("true"), false));
+            assert!(!is_mouse_event_device(true, Some("true"), None, false));
         }
 
         #[test]
@@ -238,12 +245,19 @@ mod tests {
             // Devices under /devices/virtual/ (e.g. keyd virtual pointer,
             // XTEST pointer) must never be treated as external mice even
             // when udev stamps them with ID_INPUT_MOUSE=1.
-            assert!(!is_mouse_event_device(true, Some("1"), true));
+            assert!(!is_mouse_event_device(true, Some("1"), None, true));
         }
 
         #[test]
         fn virtual_device_without_devnode_is_not_a_mouse() {
-            assert!(!is_mouse_event_device(false, Some("1"), true));
+            assert!(!is_mouse_event_device(false, Some("1"), None, true));
+        }
+
+        #[test]
+        fn i2c_hid_touchpad_event_node_with_both_properties_is_not_a_mouse() {
+            // I2C-HID touchpads set ID_INPUT_TOUCHPAD=1 and ID_INPUT_MOUSE=1
+            // on the same event node; it must not be counted as an external mouse.
+            assert!(!is_mouse_event_device(true, Some("1"), Some("1"), false));
         }
     }
 
