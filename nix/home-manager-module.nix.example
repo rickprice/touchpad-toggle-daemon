@@ -15,6 +15,10 @@
 ##
 ## Leaving --touchpad-name off falls back to autodetecting the first device
 ## whose name contains "touchpad" (case-insensitive).
+##
+## Desktop notifications are sent via D-Bus (notify-rust/zbus) whenever the
+## touchpad is enabled or disabled. No additional packages are required; the
+## D-Bus session bus is available automatically within graphical-session.target.
 {
   pkgs,
   touchpad-toggle-daemon,
@@ -25,7 +29,7 @@
 
   systemd.user.services.touchpad-toggle-daemon = {
     Unit = {
-      Description = "Disable the touchpad while an external mouse is connected";
+      Description = "Disable the touchpad while an external mouse is connected and send desktop notifications on state change";
       After = [ "graphical-session.target" ];
       PartOf = [ "graphical-session.target" ];
     };
