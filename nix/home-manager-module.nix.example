@@ -2,7 +2,7 @@
 ##
 ## In your dotfiles flake, add this repo as an input:
 ##
-##   inputs.touchpad-toggle-daemon.url = "github:<you>/touchpad-toggle-daemon";
+##   inputs.touchpad-toggle-daemon.url = "github:<you>/touchpad-toggle-daemon/v0.2.4";
 ##
 ## then pull the package into home.packages and the systemd unit below into
 ## your home/default.nix (or wherever the rest of your home-manager module
