@@ -6,8 +6,9 @@ connected and active, and re-enables it once the last active mouse is gone.
 It watches udev's `input` subsystem for hotplug events (no polling),
 identifies mice via the `ID_INPUT_MOUSE` udev property (no vendor/product ID
 or name-substring matching), tracks a running count so multiple mice plugged
-in at once behave correctly, and toggles the touchpad by shelling out to
-`xinput enable`/`xinput disable`.
+in at once behave correctly, toggles the touchpad by shelling out to
+`xinput enable`/`xinput disable`, and sends a desktop notification via D-Bus
+whenever the touchpad state changes.
 
 ## Battery-aware detection
 

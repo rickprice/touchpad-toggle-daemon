@@ -12,6 +12,7 @@ use std::process::Command;
 
 use clap::Parser;
 use log::{debug, error, info, trace};
+use notify_rust::Notification;
 use nix::errno::Errno;
 use nix::poll::{poll, PollFd, PollFlags};
 use touchpad_toggle_daemon::{
@@ -76,10 +77,9 @@ fn set_touchpad_enabled(touchpad_name: &str, enabled: bool) {
         .status()
     {
         Ok(status) if status.success() => {
-            info!(
-                "{} touchpad \"{touchpad_name}\"",
-                if enabled { "Enabled" } else { "Disabled" }
-            );
+            let label = if enabled { "Enabled" } else { "Disabled" };
+            info!("{label} touchpad \"{touchpad_name}\"");
+            notify_touchpad_state(label);
         }
         Ok(status) => {
             error!("`xinput {action} \"{touchpad_name}\"` exited with {status}");
@@ -87,6 +87,18 @@ fn set_touchpad_enabled(touchpad_name: &str, enabled: bool) {
         Err(e) => {
             error!("Failed to run `xinput {action} \"{touchpad_name}\"` (is xinput on PATH?): {e}");
         }
+    }
+}
+
+/// Sends a transient desktop notification via D-Bus.
+fn notify_touchpad_state(state: &str) {
+    let summary = format!("Touchpad {state}");
+    if let Err(e) = Notification::new()
+        .appname("touchpad-toggle")
+        .summary(&summary)
+        .show()
+    {
+        debug!("Desktop notification failed: {e}");
     }
 }
 
