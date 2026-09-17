@@ -68,6 +68,18 @@ or persistently in the systemd unit's `[Service]` section:
 Environment=RUST_LOG=debug
 ```
 
+## Desktop notifications
+
+Whenever the touchpad is enabled or disabled the daemon sends a transient
+desktop notification (`"Touchpad Enabled"` / `"Touchpad Disabled"`) via the
+freedesktop.org notification D-Bus interface, using the
+[notify-rust](https://crates.io/crates/notify-rust) crate with its `zbus`
+backend (pure Rust — no `libnotify` or `notify-send` binary required).
+
+Any compliant notification daemon (GNOME Shell, KDE Plasma, `dunst`,
+`mako`, etc.) will display the popup. If no notification daemon is running
+the call is a no-op and a `debug`-level log line is emitted instead.
+
 ## Virtual pointer devices (keyd, XTEST)
 
 Software keyboard remappers such as [keyd](https://github.com/rvaiya/keyd) and
