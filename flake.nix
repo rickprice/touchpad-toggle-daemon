@@ -31,7 +31,7 @@
           # out to it, so put it on PATH rather than linking against it.
           postFixup = ''
             wrapProgram $out/bin/touchpad-toggle-daemon \
-              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xorg.xinput ]}
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.xinput ]}
           '';
 
           meta = with pkgs.lib; {
@@ -43,7 +43,7 @@
 
         devShells.default = pkgs.mkShell {
           inputsFrom = [ self.packages.${system}.default ];
-          packages = [ pkgs.xorg.xinput ];
+          packages = [ pkgs.xinput ];
         };
       }
     );
